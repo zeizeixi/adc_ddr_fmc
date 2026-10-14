@@ -1,0 +1,12 @@
+.Xil/
+xsim.dir/
+*.jou
+*.log
+*.pb
+*.wdb
+*.dcp
+*.bit
+*.ltx
+*.runs/
+*.cache/
+*.gen/

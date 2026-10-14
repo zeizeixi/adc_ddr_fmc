@@ -1,0 +1,77 @@
+{
+  "name": "fmc_return_fix",
+  "target": "rtl",
+  "rtl_dialect": "verilog",
+  "modules": [{
+    "name": "fmc_sdram_sync",
+    "rtl_path": "rtl/fmc_sdram_sync.v",
+    "description": "STM32F429 SDRAM-style peripheral with C2 return data for the subsequent C3 capture edge.",
+    "interfaces": {"ports": [
+      {"name":"clk","direction":"input","width":1,"role":"clock","description":"J20 SDCLK through BUFG, nominal 56 MHz."},
+      {"name":"rst","direction":"input","width":1,"role":"reset","description":"High-active domain reset; asynchronously disables DQ output."},
+      {"name":"enabled","direction":"input","width":1,"role":"control","description":"Static FMC ownership enable."},
+      {"name":"clear_error","direction":"input","width":1,"role":"control","description":"Clears sticky protocol error; new errors dominate."},
+      {"name":"cke","direction":"input","width":1,"role":"control","description":"SDRAM clock enable."},
+      {"name":"cs_n","direction":"input","width":1,"role":"control","description":"Active-low SDRAM chip select."},
+      {"name":"ras_n","direction":"input","width":1,"role":"control","description":"Active-low RAS command bit."},
+      {"name":"cas_n","direction":"input","width":1,"role":"control","description":"Active-low CAS command bit."},
+      {"name":"we_n","direction":"input","width":1,"role":"control","description":"Active-low write command bit."},
+      {"name":"addr","direction":"input","width":13,"role":"address","description":"Multiplexed row/column; A10 is auto-precharge."},
+      {"name":"bank","direction":"input","width":2,"role":"address","description":"Four SDRAM banks."},
+      {"name":"dqm","direction":"input","width":2,"role":"mask","description":"Byte masks, one bit for each eight DQ bits."},
+      {"name":"dq","direction":"inout","width":16,"role":"data","description":"16-bit bidirectional bus; FPGA drives only its response window."},
+      {"name":"bus_read","direction":"output","width":1,"role":"request","description":"Valid decoded read request sampled at C1."},
+      {"name":"bus_write","direction":"output","width":1,"role":"request","description":"Valid decoded write request sampled at C1."},
+      {"name":"bus_addr","direction":"output","width":24,"role":"address","description":"Byte address: bank, row, column[7:0], zero bit."},
+      {"name":"bus_wdata","direction":"output","width":16,"role":"data","description":"Registered write bus data."},
+      {"name":"bus_mask","direction":"output","width":2,"role":"mask","description":"Registered write byte masks."},
+      {"name":"register_data","direction":"input","width":16,"role":"data","description":"Combinational FMC-domain register read value."},
+      {"name":"memory_selected","direction":"input","width":1,"role":"control","description":"Legal owned RAM window selection."},
+      {"name":"memory_data","direction":"input","width":16,"role":"data","description":"Two-cycle registered XPM RAM return."},
+      {"name":"memory_valid","direction":"input","width":1,"role":"valid","description":"Aligned two-cycle RAM response valid, not an external ready/valid interface."},
+      {"name":"reads_idle","direction":"output","width":1,"role":"status","description":"Read request pipeline empty, used to guard ACK."},
+      {"name":"mode_valid","direction":"output","width":1,"role":"status","description":"MRS bank0/address0230 accepted."},
+      {"name":"protocol_error","direction":"output","width":1,"role":"status","description":"Sticky invalid mode, row, interrupted read or missing RAM response error."}
+    ]},
+    "clock": {"name":"clk","edge":"posedge","frequency_mhz":56},
+    "reset": {"name":"rst","active":"high","synchronous":true,"output_enable_exception":"drive_tristate is asynchronously preset to FFFF"},
+    "behavior": [
+      "C0 registers command/address/data. C1 decodes the request and launches the existing two-cycle RAM.",
+      "C2 produces register_second or registered RAM data; output enable opens at C2 and closes at C3 unless another read follows.",
+      "No extra data output register is added after the two-cycle sources. The MCU sees the current halfword before its subsequent capture edge.",
+      "Byte address and all command/status register definitions remain unchanged. READ never implicitly ACKs or releases a block.",
+      "ACTIVE stores row state; PRECHARGE closes it. Only MRS bank0/address0230 enables normal register and RAM accesses."
+    ],
+    "constraints": [
+      "Keep port names, high-active reset, row decoder and ADC/DDR block ownership contracts unchanged.",
+      "Use J20 SRCC, native BUFG clock, CAS3, RPIPE2 and RBURST disabled. Keep existing 2-cycle XPM RAM read latency.",
+      "Constrain DQ to a rising-edge virtual capture clock with 2 ns MCU setup plus 0.5 ns provisional board budget, and 0.25 ns uncertainty.",
+      "Keep 16 independent IOB tristate FFs. The new data output is a KEEP fabric net for ILA; never route IOB FF Q back into fabric."
+    ],
+    "corner_cases": [
+      "Illegal row/mode or unavailable owned RAM returns DEAD and latches error.",
+      "CKE low cancels an outstanding read and disables output. A stopped clock during reset must still release DQ.",
+      "Consecutive halfword reads must return their own current word; output must release before a legal host write.",
+      "Auto-precharge and explicit PRECHARGE close row ownership without shifting register addresses."
+    ],
+    "verification_cases": [
+      "Old C3-launch implementation fails the C3-minus-2ns read-data check; repaired implementation passes.",
+      "Register ID/version/status/scratch, byte writes, SET200/START order and explicit ACK/RELEASE.",
+      "4096-word full RAM block, 40-byte tail, invalid window access and short low/high SDCLK duty cases.",
+      "Read-to-write handover and asynchronous DQ release during active read.",
+      "Independent interface implementation and complete original-project copy with matching ILA probes; hardware acceptance remains to be performed."
+    ],
+    "timing_diagrams": [{
+      "id":"read_response","title":"Current halfword returned before capture","scenario":"read_response",
+      "description":"C0 READ; C1 RAM request; C2 data and output enable; C3 MCU capture of the data valid before this edge. This is a logical timing contract, not a replacement for routed timing or scope measurement.",
+      "wavejson":{"signal":[
+        {"name":"SDCLK C0 C1 C2 C3 C4","wave":"p...."},
+        {"name":"READ pins","wave":"10..."},
+        {"name":"RAM request","wave":"010.."},
+        {"name":"registered RAM valid","wave":"0.10."},
+        {"name":"DQ current word","wave":"z.=z.","data":["CURRENT"]},
+        {"name":"MCU capture edge","wave":"0..10"}
+      ],"head":{"text":"Present data during C2 to C3; remove the extra C3 data FF"}}
+    }]
+  }]
+}
